@@ -1,0 +1,53 @@
+title: サンプルVTuber ショート切り抜き
+top_title_1: 上部タイトル1行目サンプル
+top_title_2: 上部タイトル2行目サンプル
+credit: 元配信：サンプルVTuber（@sample_vtuber）配信より
+
+src_dir: clips/sample_input
+out_dir: clips/sample_output
+output_name: edited_shorts.mp4
+
+speed: 1.06
+transition_sec: 0.14
+silence_noise_db: "-32dB"
+min_silence_sec: 0.26
+
+# 配信画面の解像度・レイアウトに合わせて ffmpeg crop (w:h:x:y) を指定
+layout:
+  upper_crop: "1920:1080:0:0"
+  face_crop: "960:742:900:90"
+  face_zoom_crop: "740:572:1010:115"
+
+# 冒頭約2秒のオチ先出しフック（不要な場合は hook ブロック自体を削除）
+hook:
+  src: raw_clip.mp4
+  start: 28.0
+  end: 33.0
+  speed: 1.10
+  max_intervals: 2
+  banner: "▼ 見どころハイライト ▼"
+  subtitle: '「冒頭フック用{\c&H0038FF&\fscx122\fscy122}名セリフ{\r}」'
+
+segments:
+  - src: raw_clip.mp4
+    start: 0.0
+    end: 15.0
+    punch_orig: 10.0
+    badge: "① シーン1の見出し"
+    tsukkomi: "ツッコミテロップ例①"
+    chat: ["リスナー", "コメント吹き出し例①"]
+    subs:
+      - [0.5, 5.0, "Main", "セリフ字幕サンプル1-1"]
+      - [5.2, 9.8, "Main", '強調入り字幕\N{\c&H00EAFF&\fscx115\fscy115}ハイライト語句{\r}の例']
+      - [10.0, 14.5, "Impact", 'オチの{\c&H0038FF&\fscx122\fscy122}パンチワード{\r}！']
+
+  - src: raw_clip.mp4
+    start: 15.2
+    end: 32.0
+    punch_orig: 26.0
+    badge: "② シーン2の見出し"
+    tsukkomi: "ツッコミテロップ例②"
+    chat: ["リスナー", "コメント吹き出し例②"]
+    subs:
+      - [15.5, 22.0, "Main", "セリフ字幕サンプル2-1"]
+      - [25.5, 31.5, "Impact", '締めの一言\N{\c&H0038FF&\fscx125\fscy125}ラストオチ{\r}！']

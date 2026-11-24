@@ -1,0 +1,32 @@
+version: 1
+channels:
+- id: UCxxxxxxxxxxxxxxxxxxxxxx
+  name: サンプルVTuber
+  handle: '@sample_vtuber'
+  channel_url: https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx
+  status: approved
+  approved_at: '2026-11-25'
+  guideline_source: https://www.youtube.com/watch?v=xxxxxxxxxxx
+  guideline_excerpt:
+  - 切り抜き・SNSでの共有歓迎
+  evidence:
+    captured_at: '2026-11-25T00:00:00+09:00'
+    evidence_json: evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/evidence.json
+    description_file: evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/video_description.txt
+    description_sha256: '0000000000000000000000000000000000000000000000000000000000000000'
+    external_guideline_urls: []
+  clip_tag: '#サンプル切り抜き'
+  rules:
+    required_credit: 元配信URL・チャンネルURLを概要欄に明記
+    exclude:
+    - メンバーシップ限定
+    - 歌枠・楽曲権利あり
+    - 切り抜き禁止指定枠
+  credit_template: |
+    ▼元チャンネル：サンプルVTuber
+    https://www.youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx
+
+    ▼元配信
+    {source_url}
+
+    #サンプル切り抜き

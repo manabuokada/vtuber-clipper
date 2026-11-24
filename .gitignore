@@ -1,0 +1,20 @@
+.venv/
+__pycache__/
+*.pyc
+
+# 認証・環境固有設定
+client_secret*.json
+token.json
+upload_config.json
+
+# ローカル運用データ（許諾エビデンス・候補/承認リスト）
+channels.yaml
+candidates.yaml
+evidence/
+
+# 生成済み素材・動画
+assets/
+clips/
+*.mp4
+*.wav
+*.vtt
