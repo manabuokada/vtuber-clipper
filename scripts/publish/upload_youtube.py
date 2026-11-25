@@ -254,6 +254,19 @@ def send_webhook_notification(
         return False
 
 
+def cleanup_uploaded_video(video_path: Path) -> bool:
+    if not video_path.exists():
+        return False
+    try:
+        size_mb = video_path.stat().st_size / (1024 * 1024)
+        video_path.unlink()
+        print(f"ローカル動画ファイルを削除しました: {video_path.name} ({size_mb:.2f} MB)")
+        return True
+    except OSError as e:
+        print(f"[注意] ローカル動画ファイルの削除に失敗しました: {video_path} ({e})", file=sys.stderr)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description="YouTube Data API v3 動画アップローダー")
     parser.add_argument("--video", type=Path, default=BASE_DIR / "edited_clip.mp4")
@@ -270,6 +283,7 @@ def main():
         help="metadata.json の privacyStatus を上書き",
     )
     parser.add_argument("--dry-run", action="store_true", help="アップロードせず内容確認のみ")
+    parser.add_argument("--cleanup", action="store_true", help="アップロード成功後にローカル動画ファイル（--video）を削除")
     parser.add_argument("--auth-and-lock", action="store_true", help="初回認証して投稿先チャンネルIDをロックするだけ")
     parser.add_argument("--notify-url", default=None, help="完了通知先 Webhook URL（Discord / Slack / ntfy.sh 自動判別）")
     parser.add_argument("--no-notify", action="store_true", help="完了通知をスキップ")
@@ -317,6 +331,7 @@ def main():
         print(f"Thumbnail : {args.thumbnail if args.thumbnail.exists() else '(なし)'}")
         print(f"Secret    : {'OK' if args.client_secret.exists() else '未配置 (' + str(args.client_secret) + ')'}")
         print(f"Notify    : {'OFF (--no-notify)' if args.no_notify else ('設定あり' if resolve_notify_url(args.notify_url) else '未設定')}")
+        print(f"Cleanup   : {'ON (--cleanup)' if args.cleanup else 'OFF'}")
         print(json.dumps(meta, ensure_ascii=False, indent=2))
         return
 
@@ -339,6 +354,9 @@ def main():
                 video_id=video_id,
                 privacy=meta.get("privacyStatus", "private"),
             )
+
+    if args.cleanup:
+        cleanup_uploaded_video(args.video)
 
 
 if __name__ == "__main__":
