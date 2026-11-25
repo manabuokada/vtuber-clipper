@@ -11,8 +11,8 @@ channels:
   - 切り抜き・SNSでの共有歓迎
   evidence:
     captured_at: '2026-11-25T00:00:00+09:00'
-    evidence_json: evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/evidence.json
-    description_file: evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/video_description.txt
+    evidence_json: work/evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/evidence.json
+    description_file: work/evidence/UCxxxxxxxxxxxxxxxxxxxxxx/2026-11-25/video_description.txt
     description_sha256: '0000000000000000000000000000000000000000000000000000000000000000'
     external_guideline_urls: []
   clip_tag: '#サンプル切り抜き'

@@ -11,7 +11,7 @@ YAML設定（--spec）駆動のショート切り抜き自動生成スクリプ�
 - 声が出ている間だけ自動で下がるサイドチェイン・ダッキングBGM ＋ 各種SE
 
 使い方:
-  ./.venv/bin/python build_shorts.py --spec shorts_spec.example.yaml
+  ./.venv/bin/python scripts/production/build_shorts.py --spec examples/shorts_spec.example.yaml
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ import subprocess
 import sys
 import yaml
 
-ROOT = Path(__file__).resolve().parent
-ASSETS = ROOT / "assets"
+ROOT = Path(__file__).resolve().parents[2]
+ASSETS = ROOT / "work" / "assets"
 
 
 def resolve_path(p: str | Path, base: Path) -> Path:
