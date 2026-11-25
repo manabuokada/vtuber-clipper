@@ -40,8 +40,10 @@ vtuber-clipper/
 │   │   ├── generate_assets.py
 │   │   ├── build_shorts.py
 │   │   └── render_clips.py
-│   └── publish/                     # 3. YouTubeアップロード・Webhook通知
-│       └── upload_youtube.py
+│   ├── publish/                     # 3. YouTubeアップロード・Webhook通知
+│   │   └── upload_youtube.py
+│   └── maintenance/                 # 4. ローカル動画・中間ファイルの整理
+│       └── cleanup_work.py
 ├── config/                          # (.gitignore) 認証・チャンネル運用設定
 │   ├── channels.yaml
 │   ├── candidates.yaml
@@ -83,7 +85,8 @@ vtuber-clipper/
 | `scripts/production/generate_assets.py` | ショート動画用の透過PNGフレーム・集中線・赤枠・BGM・効果音SEを `work/assets/` へ生成 |
 | `scripts/production/build_shorts.py` | YAML 設定（`--spec`）駆動の 1080×1920 縦動画生成（冒頭フック・ジェットカット・レイアウト別クロップ・ズーム＆シェイク・字幕・ダッキングBGM） |
 | `scripts/production/render_clips.py` | 横動画（1080p H.264 / -14 LUFS）＋サムネイル並列レンダリング用スクリプト |
-| `scripts/publish/upload_youtube.py` | YouTube Data API v3 アップローダー（OAuth認証・誤爆防止チャンネルロック・Webhook完了通知・`--dry-run` 対応） |
+| `scripts/publish/upload_youtube.py` | YouTube Data API v3 アップローダー（OAuth認証・誤爆防止チャンネルロック・Webhook完了通知・`--dry-run`・`--cleanup` 対応） |
+| `scripts/maintenance/cleanup_work.py` | `work/clips/` 配下の動画・中間ファイル・確認用画像を安全に整理する CLI（デフォルト dry-run、`work/evidence/` やメタデータは厳格保護） |
 
 ---
 
@@ -148,6 +151,25 @@ uv pip install -r requirements.txt
 ```bash
 # 通知だけの疎通テスト
 ./.venv/bin/python scripts/publish/upload_youtube.py --test-notify
+```
+
+### 8. ローカル動画・中間ファイルのクリーンアップ
+- [build_shorts.py](scripts/production/build_shorts.py) は中間ファイル（`part_*.mp4` / `joined_xfade.mp4`）を OS 一時ディレクトリへ生成し、終了時に自動削除します（デバッグ時に残したい場合は `--keep-intermediates` を指定）。
+- [upload_youtube.py](scripts/publish/upload_youtube.py) に `--cleanup` を付けると、アップロード成功時のみ対象の動画ファイル（`--video`）を自動削除します（`--dry-run` や失敗時は削除しません）。
+- 残ったローカル動画・確認用画像は [cleanup_work.py](scripts/maintenance/cleanup_work.py) で一括整理できます（`work/evidence/`・`config/`・`*.yaml`・`metadata.json` 等は保護対象）：
+
+```bash
+# 削除候補と解放見込み容量の確認（デフォルト dry-run）
+./.venv/bin/python scripts/maintenance/cleanup_work.py
+
+# 中間ファイルと確認用画像（verify_*.jpg / layout_probe.jpg）のみ削除
+./.venv/bin/python scripts/maintenance/cleanup_work.py --intermediates-only --apply
+
+# 7日以上前の動画・確認用画像を削除
+./.venv/bin/python scripts/maintenance/cleanup_work.py --older-than 7 --apply
+
+# work/clips/ の対象動画をすべて削除
+./.venv/bin/python scripts/maintenance/cleanup_work.py --apply
 ```
 
 ---

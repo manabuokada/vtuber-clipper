@@ -17,10 +17,12 @@ YAML設定（--spec）駆動のショート切り抜き自動生成スクリプ�
 from __future__ import annotations
 
 import argparse
+import contextlib
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -186,10 +188,10 @@ def pop_anim(text: str) -> str:
     return r"{\fscx76\fscy76\t(0,85,\fscx107\fscy107)\t(85,155,\fscx100\fscy100)}" + normalize_ass_text(text)
 
 
-def build_from_spec(spec_path: Path) -> Path:
+def build_from_spec(spec_path: Path, keep_intermediates: bool = False) -> Path:
     spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
     src_dir = resolve_path(spec["src_dir"], ROOT)
-    out_dir = resolve_path(spec["out_dir"], ROOT)
+    out_dir = resolve_path(spec["out_dir"], ROOT).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
     for required in ("frame_overlay.png", "speedlines.png", "red_vignette.png", "sfx_pop.wav", "sfx_whoosh.wav", "sfx_impact.wav"):
@@ -210,154 +212,160 @@ def build_from_spec(spec_path: Path) -> Path:
     has_hook = False
     offset = 0.0
 
-    # Optional Cold-Open Hook
-    hook_cfg = spec.get("hook")
-    if hook_cfg:
-        has_hook = True
-        hook_src = resolve_path(hook_cfg["src"], src_dir)
-        hook_intervals = detect_speech_intervals(
-            hook_src,
-            noise_db=noise_db,
-            min_sil=min_sil,
-            start_clip=float(hook_cfg.get("start", 0.0)),
-            end_clip=float(hook_cfg["end"]) if hook_cfg.get("end") is not None else None,
-        )
-        max_iv = int(hook_cfg.get("max_intervals", 2))
-        hook_dst = out_dir / "part_0_hook.mp4"
-        hook_dur, _ = render_segment(
-            hook_src,
-            hook_dst,
-            hook_intervals[:max_iv],
-            float(hook_cfg.get("speed", 1.10)),
-            0.0,
-            layout_cfg,
-            always_zoom=True,
-        )
-        print(f"Hook: {hook_dur:.2f}s")
-        part_files.append(hook_dst)
-        part_durs.append(hook_dur)
-        sfx_events.append((0.02, "impact"))
+    with contextlib.ExitStack() as stack:
+        if keep_intermediates:
+            work_dir = out_dir
+        else:
+            work_dir = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="vtuber_clipper_")))
 
-        if hook_cfg.get("banner"):
-            ass_events.append(
-                f"Dialogue: 3,0:00:00.00,{fmt_ass(hook_dur - 0.05)},HookBanner,hook,0,0,0,,"
-                + pop_anim(str(hook_cfg["banner"]))
+        # Optional Cold-Open Hook
+        hook_cfg = spec.get("hook")
+        if hook_cfg:
+            has_hook = True
+            hook_src = resolve_path(hook_cfg["src"], src_dir)
+            hook_intervals = detect_speech_intervals(
+                hook_src,
+                noise_db=noise_db,
+                min_sil=min_sil,
+                start_clip=float(hook_cfg.get("start", 0.0)),
+                end_clip=float(hook_cfg["end"]) if hook_cfg.get("end") is not None else None,
             )
-        if hook_cfg.get("subtitle"):
-            ass_events.append(
-                f"Dialogue: 2,0:00:00.05,{fmt_ass(hook_dur - 0.05)},Impact,sub,0,0,0,,"
-                + pop_anim(str(hook_cfg["subtitle"]))
+            max_iv = int(hook_cfg.get("max_intervals", 2))
+            hook_dst = work_dir / "part_0_hook.mp4"
+            hook_dur, _ = render_segment(
+                hook_src,
+                hook_dst,
+                hook_intervals[:max_iv],
+                float(hook_cfg.get("speed", 1.10)),
+                0.0,
+                layout_cfg,
+                always_zoom=True,
             )
-        offset = hook_dur - trans_d
+            print(f"Hook: {hook_dur:.2f}s")
+            part_files.append(hook_dst)
+            part_durs.append(hook_dur)
+            sfx_events.append((0.02, "impact"))
 
-    segments = spec.get("segments") or []
-    if not segments:
-        print("[エラー] spec に segments が定義されていません。", file=sys.stderr)
-        sys.exit(1)
-
-    for idx, seg in enumerate(segments, 1):
-        seg_src = resolve_path(seg["src"], src_dir)
-        intervals = detect_speech_intervals(
-            seg_src,
-            noise_db=noise_db,
-            min_sil=min_sil,
-            start_clip=float(seg.get("start", 0.0)),
-            end_clip=float(seg["end"]) if seg.get("end") is not None else None,
-        )
-        dst = out_dir / f"part_{idx}.mp4"
-        seg_dur, punch_rel = render_segment(
-            seg_src,
-            dst,
-            intervals,
-            speed,
-            float(seg.get("punch_orig", seg.get("start", 0.0))),
-            seg.get("layout") or layout_cfg,
-        )
-        print(f"Part {idx}: {seg_dur:.2f}s (punch @{punch_rel:.2f}s)")
-        part_files.append(dst)
-        part_durs.append(seg_dur)
-
-        if has_hook or idx > 1:
-            sfx_events.append((max(0.0, offset - 0.05), "whoosh"))
-        sfx_events.append((offset + 0.08, "pop"))
-        sfx_events.append((offset + punch_rel, "impact"))
-
-        seg_end_abs = offset + seg_dur - (trans_d if idx < len(segments) else 0.0)
-
-        if seg.get("badge"):
-            ass_events.append(
-                f"Dialogue: 3,{fmt_ass(offset + 0.05)},{fmt_ass(seg_end_abs)},Badge,badge,0,0,0,,"
-                + pop_anim(f" {seg['badge']} ")
-            )
-        if seg.get("tsukkomi"):
-            ass_events.append(
-                f"Dialogue: 4,{fmt_ass(offset + punch_rel)},{fmt_ass(seg_end_abs)},Tsukkomi,tsukkomi,0,0,0,,"
-                + pop_anim(str(seg["tsukkomi"]))
-            )
-        if seg.get("chat"):
-            c_user, c_msg = seg["chat"]
-            c_start = min(seg_end_abs - 0.8, offset + punch_rel + 0.45)
-            if c_start < seg_end_abs:
+            if hook_cfg.get("banner"):
                 ass_events.append(
-                    f"Dialogue: 3,{fmt_ass(c_start)},{fmt_ass(seg_end_abs)},ChatBubble,chat,0,0,0,,"
-                    f"{{\\fad(120,120)}} ▶ {c_user}：{c_msg} "
+                    f"Dialogue: 3,0:00:00.00,{fmt_ass(hook_dur - 0.05)},HookBanner,hook,0,0,0,,"
+                    + pop_anim(str(hook_cfg["banner"]))
                 )
+            if hook_cfg.get("subtitle"):
+                ass_events.append(
+                    f"Dialogue: 2,0:00:00.05,{fmt_ass(hook_dur - 0.05)},Impact,sub,0,0,0,,"
+                    + pop_anim(str(hook_cfg["subtitle"]))
+                )
+            offset = hook_dur - trans_d
 
-        for a0, b0, style, txt in seg.get("subs", []):
-            ta = offset + map_time(float(a0), intervals, speed)
-            tb = offset + map_time(float(b0), intervals, speed)
-            if tb - ta < 0.25:
-                tb = min(seg_end_abs, ta + 0.65)
-            tb = min(tb, seg_end_abs)
-            if ta >= tb:
-                continue
-            ass_events.append(f"Dialogue: 2,{fmt_ass(ta)},{fmt_ass(tb)},{style},sub,0,0,0,,{pop_anim(str(txt))}")
+        segments = spec.get("segments") or []
+        if not segments:
+            print("[エラー] spec に segments が定義されていません。", file=sys.stderr)
+            sys.exit(1)
 
-        offset += seg_dur - trans_d
+        for idx, seg in enumerate(segments, 1):
+            seg_src = resolve_path(seg["src"], src_dir)
+            intervals = detect_speech_intervals(
+                seg_src,
+                noise_db=noise_db,
+                min_sil=min_sil,
+                start_clip=float(seg.get("start", 0.0)),
+                end_clip=float(seg["end"]) if seg.get("end") is not None else None,
+            )
+            dst = work_dir / f"part_{idx}.mp4"
+            seg_dur, punch_rel = render_segment(
+                seg_src,
+                dst,
+                intervals,
+                speed,
+                float(seg.get("punch_orig", seg.get("start", 0.0))),
+                seg.get("layout") or layout_cfg,
+            )
+            print(f"Part {idx}: {seg_dur:.2f}s (punch @{punch_rel:.2f}s)")
+            part_files.append(dst)
+            part_durs.append(seg_dur)
 
-    total_dur = sum(part_durs) - trans_d * (len(part_durs) - 1)
-    print(f"Total Shorts duration: {total_dur:.2f}s")
+            if has_hook or idx > 1:
+                sfx_events.append((max(0.0, offset - 0.05), "whoosh"))
+            sfx_events.append((offset + 0.08, "pop"))
+            sfx_events.append((offset + punch_rel, "impact"))
 
-    # 1) Join parts using xfade + acrossfade (or reuse single part directly)
-    joined_mp4 = out_dir / "joined_xfade.mp4"
-    if len(part_files) == 1:
-        joined_mp4 = part_files[0]
-    else:
-        xf_inputs = []
-        for p in part_files:
-            xf_inputs += ["-i", str(p)]
+            seg_end_abs = offset + seg_dur - (trans_d if idx < len(segments) else 0.0)
 
-        v_chain = []
-        a_chain = []
-        cur_v = "[0:v]"
-        cur_a = "[0:a]"
-        acc_d = part_durs[0]
-        for i in range(1, len(part_files)):
-            xf_off = acc_d - trans_d
-            nv = f"[vx{i}]"
-            na = f"[ax{i}]"
-            tr_type = "fadewhite" if (has_hook and i == 1) else "slideleft"
-            v_chain.append(f"{cur_v}[{i}:v]xfade=transition={tr_type}:duration={trans_d:.2f}:offset={xf_off:.3f}{nv}")
-            a_chain.append(f"{cur_a}[{i}:a]acrossfade=d={trans_d:.2f}:c1=tri:c2=tri{na}")
-            cur_v, cur_a = nv, na
-            acc_d = xf_off + part_durs[i]
+            if seg.get("badge"):
+                ass_events.append(
+                    f"Dialogue: 3,{fmt_ass(offset + 0.05)},{fmt_ass(seg_end_abs)},Badge,badge,0,0,0,,"
+                    + pop_anim(f" {seg['badge']} ")
+                )
+            if seg.get("tsukkomi"):
+                ass_events.append(
+                    f"Dialogue: 4,{fmt_ass(offset + punch_rel)},{fmt_ass(seg_end_abs)},Tsukkomi,tsukkomi,0,0,0,,"
+                    + pop_anim(str(seg["tsukkomi"]))
+                )
+            if seg.get("chat"):
+                c_user, c_msg = seg["chat"]
+                c_start = min(seg_end_abs - 0.8, offset + punch_rel + 0.45)
+                if c_start < seg_end_abs:
+                    ass_events.append(
+                        f"Dialogue: 3,{fmt_ass(c_start)},{fmt_ass(seg_end_abs)},ChatBubble,chat,0,0,0,,"
+                        f"{{\\fad(120,120)}} ▶ {c_user}：{c_msg} "
+                    )
 
-        r = subprocess.run(
-            ["ffmpeg", "-y"] + xf_inputs + [
-                "-filter_complex", ";".join(v_chain + a_chain),
-                "-map", cur_v, "-map", cur_a,
-                "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
-                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
-                str(joined_mp4), "-loglevel", "warning",
-            ],
-            capture_output=True, text=True,
-        )
-        if r.returncode != 0:
-            raise RuntimeError(f"xfade failed: {r.stderr}")
+            for a0, b0, style, txt in seg.get("subs", []):
+                ta = offset + map_time(float(a0), intervals, speed)
+                tb = offset + map_time(float(b0), intervals, speed)
+                if tb - ta < 0.25:
+                    tb = min(seg_end_abs, ta + 0.65)
+                tb = min(tb, seg_end_abs)
+                if ta >= tb:
+                    continue
+                ass_events.append(f"Dialogue: 2,{fmt_ass(ta)},{fmt_ass(tb)},{style},sub,0,0,0,,{pop_anim(str(txt))}")
 
-    # 2) Write ASS subtitles
-    ass_path = out_dir / "shorts.ass"
-    ass_text = f"""[Script Info]
+            offset += seg_dur - trans_d
+
+        total_dur = sum(part_durs) - trans_d * (len(part_durs) - 1)
+        print(f"Total Shorts duration: {total_dur:.2f}s")
+
+        # 1) Join parts using xfade + acrossfade (or reuse single part directly)
+        joined_mp4 = work_dir / "joined_xfade.mp4"
+        if len(part_files) == 1:
+            joined_mp4 = part_files[0]
+        else:
+            xf_inputs = []
+            for p in part_files:
+                xf_inputs += ["-i", str(p)]
+
+            v_chain = []
+            a_chain = []
+            cur_v = "[0:v]"
+            cur_a = "[0:a]"
+            acc_d = part_durs[0]
+            for i in range(1, len(part_files)):
+                xf_off = acc_d - trans_d
+                nv = f"[vx{i}]"
+                na = f"[ax{i}]"
+                tr_type = "fadewhite" if (has_hook and i == 1) else "slideleft"
+                v_chain.append(f"{cur_v}[{i}:v]xfade=transition={tr_type}:duration={trans_d:.2f}:offset={xf_off:.3f}{nv}")
+                a_chain.append(f"{cur_a}[{i}:a]acrossfade=d={trans_d:.2f}:c1=tri:c2=tri{na}")
+                cur_v, cur_a = nv, na
+                acc_d = xf_off + part_durs[i]
+
+            r = subprocess.run(
+                ["ffmpeg", "-y"] + xf_inputs + [
+                    "-filter_complex", ";".join(v_chain + a_chain),
+                    "-map", cur_v, "-map", cur_a,
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "17", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                    str(joined_mp4), "-loglevel", "warning",
+                ],
+                capture_output=True, text=True,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(f"xfade failed: {r.stderr}")
+
+        # 2) Write ASS subtitles
+        ass_path = out_dir / "shorts.ass"
+        ass_text = f"""[Script Info]
 Title: {spec.get('title', 'VTuber Shorts')}
 ScriptType: v4.00+
 PlayResX: 1080
@@ -383,51 +391,51 @@ Dialogue: 5,0:00:00.00,{fmt_ass(total_dur)},TopTitle1,title,0,0,0,,{spec.get('to
 Dialogue: 5,0:00:00.00,{fmt_ass(total_dur)},TopTitle2,title,0,0,0,,{spec.get('top_title_2', '')}
 Dialogue: 5,0:00:00.00,{fmt_ass(total_dur)},Credit,credit,0,0,0,,{spec.get('credit', '')}
 """ + "\n".join(ass_events) + "\n"
-    ass_path.write_text(ass_text, encoding="utf-8")
+        ass_path.write_text(ass_text, encoding="utf-8")
 
-    # 3) Final pass: Burn ASS + Sidechain-ducked BGM + SFX + -14 LUFS loudness norm
-    bgm_path = ASSETS / "custom_bgm.mp3" if (ASSETS / "custom_bgm.mp3").exists() else ASSETS / "bgm_comedic.wav"
-    sfx_map = {
-        "pop": ASSETS / "sfx_pop.wav",
-        "whoosh": ASSETS / "sfx_whoosh.wav",
-        "impact": ASSETS / "sfx_impact.wav",
-    }
+        # 3) Final pass: Burn ASS + Sidechain-ducked BGM + SFX + -14 LUFS loudness norm
+        bgm_path = ASSETS / "custom_bgm.mp3" if (ASSETS / "custom_bgm.mp3").exists() else ASSETS / "bgm_comedic.wav"
+        sfx_map = {
+            "pop": ASSETS / "sfx_pop.wav",
+            "whoosh": ASSETS / "sfx_whoosh.wav",
+            "impact": ASSETS / "sfx_impact.wav",
+        }
 
-    inputs = ["-i", str(joined_mp4), "-stream_loop", "-1", "-i", str(bgm_path)]
-    sfx_filters = []
-    sfx_labels = []
-    for i, (t_sec, kind) in enumerate(sfx_events, 2):
-        inputs += ["-i", str(sfx_map[kind])]
-        ms = max(0, int(t_sec * 1000))
-        sfx_filters.append(f"[{i}:a]adelay={ms}|{ms},volume=0.80[sfx{i}]")
-        sfx_labels.append(f"[sfx{i}]")
+        inputs = ["-i", str(joined_mp4), "-stream_loop", "-1", "-i", str(bgm_path)]
+        sfx_filters = []
+        sfx_labels = []
+        for i, (t_sec, kind) in enumerate(sfx_events, 2):
+            inputs += ["-i", str(sfx_map[kind])]
+            ms = max(0, int(t_sec * 1000))
+            sfx_filters.append(f"[{i}:a]adelay={ms}|{ms},volume=0.80[sfx{i}]")
+            sfx_labels.append(f"[sfx{i}]")
 
-    sfx_join = (";" + ";".join(sfx_filters)) if sfx_filters else ""
-    audio_fc = (
-        f"[0:a]asplit=2[voice_main][voice_sc];"
-        f"[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,volume=0.22[bgm_lvl];"
-        f"[bgm_lvl][voice_sc]sidechaincompress=threshold=0.03:ratio=5:attack=25:release=280[bgm_duck]"
-        f"{sfx_join}"
-        f";[voice_main][bgm_duck]{''.join(sfx_labels)}amix=inputs={2 + len(sfx_labels)}:duration=first:normalize=0,"
-        f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,afade=t=out:st={max(1.0, total_dur - 0.35):.2f}:d=0.35[aout]"
-    )
+        sfx_join = (";" + ";".join(sfx_filters)) if sfx_filters else ""
+        audio_fc = (
+            f"[0:a]asplit=2[voice_main][voice_sc];"
+            f"[1:a]atrim=0:{total_dur:.3f},asetpts=PTS-STARTPTS,volume=0.22[bgm_lvl];"
+            f"[bgm_lvl][voice_sc]sidechaincompress=threshold=0.03:ratio=5:attack=25:release=280[bgm_duck]"
+            f"{sfx_join}"
+            f";[voice_main][bgm_duck]{''.join(sfx_labels)}amix=inputs={2 + len(sfx_labels)}:duration=first:normalize=0,"
+            f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,afade=t=out:st={max(1.0, total_dur - 0.35):.2f}:d=0.35[aout]"
+        )
 
-    out_mp4 = out_dir / str(spec.get("output_name", "edited_shorts.mp4"))
-    r = subprocess.run(
-        ["ffmpeg", "-y"] + inputs + [
-            "-filter_complex", f"[0:v]ass={ass_path.name}[vout];{audio_fc}",
-            "-map", "[vout]", "-map", "[aout]",
-            "-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
-            "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-g", "60",
-            "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
-            "-movflags", "+faststart",
-            str(out_mp4), "-loglevel", "warning",
-        ],
-        cwd=str(out_dir),
-        capture_output=True, text=True,
-    )
-    if r.returncode != 0:
-        raise RuntimeError(f"final render failed: {r.stderr}")
+        out_mp4 = out_dir / str(spec.get("output_name", "edited_shorts.mp4"))
+        r = subprocess.run(
+            ["ffmpeg", "-y"] + inputs + [
+                "-filter_complex", f"[0:v]ass={ass_path.name}[vout];{audio_fc}",
+                "-map", "[vout]", "-map", "[aout]",
+                "-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+                "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-g", "60",
+                "-c:a", "aac", "-ar", "48000", "-ac", "2", "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(out_mp4), "-loglevel", "warning",
+            ],
+            cwd=str(out_dir),
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            raise RuntimeError(f"final render failed: {r.stderr}")
 
     # Extract 3 verify frames (hook/start, mid, near end)
     verify_times = [
@@ -447,11 +455,16 @@ Dialogue: 5,0:00:00.00,{fmt_ass(total_dur)},Credit,credit,0,0,0,,{spec.get('cred
 def main():
     parser = argparse.ArgumentParser(description="YAML spec 駆動のショート切り抜き自動生成ツール")
     parser.add_argument("--spec", type=Path, required=True, help="シーン定義 YAML ファイルのパス")
+    parser.add_argument(
+        "--keep-intermediates",
+        action="store_true",
+        help="デバッグ用に中間ファイル（part_*.mp4 / joined_xfade.mp4）を出力先に残す",
+    )
     args = parser.parse_args()
     if not args.spec.exists():
         print(f"[エラー] spec ファイルが見つかりません: {args.spec}", file=sys.stderr)
         sys.exit(1)
-    build_from_spec(args.spec)
+    build_from_spec(args.spec, keep_intermediates=args.keep_intermediates)
 
 
 if __name__ == "__main__":
