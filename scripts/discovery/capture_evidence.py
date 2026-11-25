@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 切り抜き許諾のエビデンス（動画概要欄全文・外部ガイドラインページ・取得日時・SHA-256ハッシュ）を
-evidence/<channel_id>/<YYYY-MM-DD>/ に保全し、candidates.yaml へ紐付けるスクリプト。
+work/evidence/<channel_id>/<YYYY-MM-DD>/ に保全し、config/candidates.yaml へ紐付けるスクリプト。
 
 使い方:
-  ./.venv/bin/python capture_evidence.py @handle1 @handle2
-  ./.venv/bin/python capture_evidence.py --all-strong
+  ./.venv/bin/python scripts/discovery/capture_evidence.py @handle1 @handle2
+  ./.venv/bin/python scripts/discovery/capture_evidence.py --all-strong
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ import sys
 import urllib.request
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-CANDIDATES_PATH = BASE_DIR / "candidates.yaml"
-EVIDENCE_ROOT = BASE_DIR / "evidence"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CANDIDATES_PATH = BASE_DIR / "config" / "candidates.yaml"
+EVIDENCE_ROOT = BASE_DIR / "work" / "evidence"
 JST = timezone(timedelta(hours=9))
 
 URL_RE = re.compile(r"https?://[^\s\)\]>」』]+")

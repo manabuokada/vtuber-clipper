@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 ショート動画用の共通グラフィック素材（透過PNG）と音声素材（BGM・SE）を生成するスクリプト。
-生成先: assets/
-※ assets/custom_bgm.mp3 等を置けば後からフリーBGMへ差し替え可能です。
+生成先: work/assets/
+※ work/assets/custom_bgm.mp3 等を置けば後からフリーBGMへ差し替え可能です。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import struct
 import wave
 from PIL import Image, ImageDraw, ImageFilter
 
-ASSETS = Path(__file__).resolve().parent / "assets"
+ASSETS = Path(__file__).resolve().parents[2] / "work" / "assets"
 ASSETS.mkdir(parents=True, exist_ok=True)
 
 

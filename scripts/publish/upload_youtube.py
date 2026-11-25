@@ -6,12 +6,12 @@ YouTube Data API v3 を使って切り抜き動画をアップロードするス
   1. Google Cloud Console でプロジェクトを作成し「YouTube Data API v3」を有効化
   2. OAuth 同意画面を設定し、テストユーザーに自分の Google アカウントを追加
   3. 認証情報 →「OAuth クライアント ID」（アプリケーションの種類: デスクトップ アプリ）を作成
-  4. JSON をダウンロードし、このスクリプトと同じフォルダに `client_secret.json` として配置
+  4. JSON をダウンロードし、`config/client_secret.json` として配置
 
 使い方:
-  ./.venv/bin/python upload_youtube.py --video edited_clip.mp4 --meta metadata.json
+  ./.venv/bin/python scripts/publish/upload_youtube.py --video work/clips/<name>/edited_shorts.mp4 --meta work/clips/<name>/metadata.json
   # テスト確認のみ（アップロードせず設定と認証チェック）:
-  ./.venv/bin/python upload_youtube.py --video edited_clip.mp4 --meta metadata.json --dry-run
+  ./.venv/bin/python scripts/publish/upload_youtube.py --video work/clips/<name>/edited_shorts.mp4 --meta work/clips/<name>/metadata.json --dry-run
 """
 
 from __future__ import annotations
@@ -35,8 +35,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly",
 ]
-BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "upload_config.json"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CONFIG_DIR = BASE_DIR / "config"
+CONFIG_PATH = CONFIG_DIR / "upload_config.json"
 
 
 def check_channel_lock(youtube, lock_channel: bool = False) -> tuple[str, str]:
@@ -53,6 +54,7 @@ def check_channel_lock(youtube, lock_channel: bool = False) -> tuple[str, str]:
     ch_title = items[0]["snippet"]["title"]
 
     if lock_channel:
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.exists() else {}
         cfg["allowed_channel_id"] = ch_id
         cfg["allowed_channel_title"] = ch_title
@@ -100,6 +102,7 @@ def get_authenticated_service(client_secret_path: Path, token_path: Path):
             )
             creds = flow.run_local_server(port=0)
 
+        token_path.parent.mkdir(parents=True, exist_ok=True)
         token_path.write_text(creds.to_json(), encoding="utf-8")
 
     return build("youtube", "v3", credentials=creds)
@@ -257,9 +260,9 @@ def main():
     parser.add_argument("--meta", type=Path, default=BASE_DIR / "metadata.json")
     parser.add_argument("--thumbnail", type=Path, default=BASE_DIR / "thumbnail.jpg")
     parser.add_argument(
-        "--client-secret", type=Path, default=BASE_DIR / "client_secret.json"
+        "--client-secret", type=Path, default=CONFIG_DIR / "client_secret.json"
     )
-    parser.add_argument("--token", type=Path, default=BASE_DIR / "token.json")
+    parser.add_argument("--token", type=Path, default=CONFIG_DIR / "token.json")
     parser.add_argument(
         "--privacy",
         choices=["private", "unlisted", "public"],

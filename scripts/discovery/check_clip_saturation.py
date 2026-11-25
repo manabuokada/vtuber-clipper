@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 候補VTuberごとに YouTube 上の既存切り抜き本数（第三者 vs 本人）を調査し、
-競合度（saturation）を candidates.yaml に記録するスクリプト。
+競合度（saturation）を config/candidates.yaml に記録するスクリプト。
 
 デフォルトでは第三者切り抜き 10 件以上を `saturated`（除外推奨）と判定します。
 """
@@ -18,8 +18,8 @@ import subprocess
 from urllib.parse import quote
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-CANDIDATES_PATH = BASE_DIR / "candidates.yaml"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CANDIDATES_PATH = BASE_DIR / "config" / "candidates.yaml"
 JST = timezone(timedelta(hours=9))
 
 

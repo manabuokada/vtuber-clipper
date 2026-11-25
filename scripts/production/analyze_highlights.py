@@ -21,9 +21,9 @@ import re
 import subprocess
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-CHANNELS_PATH = BASE_DIR / "channels.yaml"
-WORK_DIR = BASE_DIR / "clips"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CHANNELS_PATH = BASE_DIR / "config" / "channels.yaml"
+WORK_DIR = BASE_DIR / "work" / "clips"
 JST = timezone(timedelta(hours=9))
 
 REACTION_RE = re.compile(

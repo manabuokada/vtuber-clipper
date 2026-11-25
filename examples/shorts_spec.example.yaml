@@ -3,8 +3,8 @@ top_title_1: 上部タイトル1行目サンプル
 top_title_2: 上部タイトル2行目サンプル
 credit: 元配信：サンプルVTuber（@sample_vtuber）配信より
 
-src_dir: clips/sample_input
-out_dir: clips/sample_output
+src_dir: work/clips/sample_input
+out_dir: work/clips/sample_output
 output_name: edited_shorts.mp4
 
 speed: 1.06

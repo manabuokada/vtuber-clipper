@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 切り抜き許可（切り抜きOK／切り抜き歓迎／切り抜きタグ等）を明記している
-新人・個人勢VTuber候補を自動探索し、candidates.yaml に追記するスクリプト。
+新人・個人勢VTuber候補を自動探索し、config/candidates.yaml に追記するスクリプト。
 
 ※ここでは候補登録のみ行い、自動切り抜きは絶対に実行しません。
-  承認は manage_channels.py approve <handle> で人間が行います。
+  承認は scripts/discovery/manage_channels.py approve <handle> で人間が行います。
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ import subprocess
 import sys
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-CHANNELS_PATH = BASE_DIR / "channels.yaml"
-CANDIDATES_PATH = BASE_DIR / "candidates.yaml"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CHANNELS_PATH = BASE_DIR / "config" / "channels.yaml"
+CANDIDATES_PATH = BASE_DIR / "config" / "candidates.yaml"
 
 DEFAULT_QUERIES = [
     "ytsearch15:個人勢VTuber 初配信 切り抜き",

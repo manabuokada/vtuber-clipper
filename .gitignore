@@ -2,19 +2,14 @@
 __pycache__/
 *.pyc
 
-# 認証・環境固有設定
+# ローカル運用設定・認証情報（config/ 配下に集約）
+config/
 client_secret*.json
 token.json
 upload_config.json
 
-# ローカル運用データ（許諾エビデンス・候補/承認リスト）
-channels.yaml
-candidates.yaml
-evidence/
-
-# 生成済み素材・動画
-assets/
-clips/
+# ローカル生成物・素材・許諾エビデンス（work/ 配下に集約）
+work/
 *.mp4
 *.wav
 *.vtt

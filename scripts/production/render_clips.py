@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-clips/<handle>/raw_clip.mp4 と subtitles.ass から、YouTube向け編集済み動画
+work/clips/<handle>/raw_clip.mp4 と subtitles.ass から、YouTube向け編集済み動画
 （edited_clip.mp4: 1080p H.264 + 48kHz AAC -14 LUFS + 冒頭フレーム即表示）
 およびサムネイル（thumbnail.jpg）を並列レンダリングするスクリプト。
 """
@@ -13,8 +13,8 @@ import json
 from pathlib import Path
 import subprocess
 
-BASE_DIR = Path(__file__).resolve().parent
-CLIPS_DIR = BASE_DIR / "clips"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CLIPS_DIR = BASE_DIR / "work" / "clips"
 
 
 def get_duration(path: Path) -> float:

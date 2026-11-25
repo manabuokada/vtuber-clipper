@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-許可チャンネル（channels.yaml）と候補リスト（candidates.yaml）を管理するCLI。
+許可チャンネル（config/channels.yaml）と候補リスト（config/candidates.yaml）を管理するCLI。
 
 使い方:
-  ./.venv/bin/python manage_channels.py list
-  ./.venv/bin/python manage_channels.py approve <channel_id_or_handle>
-  ./.venv/bin/python manage_channels.py reject <channel_id_or_handle> --reason "..."
+  ./.venv/bin/python scripts/discovery/manage_channels.py list
+  ./.venv/bin/python scripts/discovery/manage_channels.py approve <channel_id_or_handle>
+  ./.venv/bin/python scripts/discovery/manage_channels.py reject <channel_id_or_handle> --reason "..."
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from pathlib import Path
 import sys
 import yaml
 
-BASE_DIR = Path(__file__).resolve().parent
-CHANNELS_PATH = BASE_DIR / "channels.yaml"
-CANDIDATES_PATH = BASE_DIR / "candidates.yaml"
+BASE_DIR = Path(__file__).resolve().parents[2]
+CHANNELS_PATH = BASE_DIR / "config" / "channels.yaml"
+CANDIDATES_PATH = BASE_DIR / "config" / "candidates.yaml"
 
 
 def load_yaml(path: Path, key: str) -> dict:
@@ -31,6 +31,7 @@ def load_yaml(path: Path, key: str) -> dict:
 
 
 def save_yaml(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=120),
         encoding="utf-8",
