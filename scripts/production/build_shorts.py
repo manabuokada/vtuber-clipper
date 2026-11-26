@@ -42,6 +42,48 @@ def get_duration(path: Path) -> float:
     return float(p.stdout.strip())
 
 
+def get_stream_duration(path: Path, stream_selector: str) -> float:
+    p = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-select_streams", stream_selector,
+            "-show_entries", "stream=duration",
+            "-of", "default=nw=1:nk=1",
+            str(path),
+        ],
+        capture_output=True, text=True,
+    )
+    if p.returncode == 0:
+        for line in p.stdout.splitlines():
+            val = line.strip()
+            if val and val != "N/A":
+                try:
+                    return float(val)
+                except ValueError:
+                    pass
+    return get_duration(path)
+
+
+def validate_av_duration(
+    path: Path,
+    expected_dur: float | None = None,
+    max_diff: float = 0.5,
+) -> tuple[float, float]:
+    v_dur = get_stream_duration(path, "v:0")
+    a_dur = get_stream_duration(path, "a:0")
+    if abs(v_dur - a_dur) > max_diff:
+        raise RuntimeError(
+            f"映像と音声の尺が大きく乖離しています ({path.name}): "
+            f"video={v_dur:.2f}s, audio={a_dur:.2f}s (diff={abs(v_dur - a_dur):.2f}s > {max_diff:.2f}s)"
+        )
+    if expected_dur is not None and (expected_dur - v_dur) > max_diff:
+        raise RuntimeError(
+            f"映像尺が期待長より短く途切れています ({path.name}): "
+            f"video={v_dur:.2f}s, expected={expected_dur:.2f}s"
+        )
+    return v_dur, a_dur
+
+
 def detect_speech_intervals(
     path: Path,
     noise_db: str = "-32dB",
@@ -141,7 +183,7 @@ def render_segment(
 
     layout = (
         f"{v_in}concat=n={len(intervals)}:v=1:a=0,fps=30[vc];"
-        f"{a_in}concat=n={len(intervals)}:v=0:a=1,aresample=48000[ac];"
+        f"{a_in}concat=n={len(intervals)}:v=0:a=1,aresample=48000,atrim=duration={total_dur:.3f},asetpts=PTS-STARTPTS[ac];"
         f"[vc]split=3[s_slide][s_face1][s_face2];"
         # Upper window (1044x584 placed inside rounded frame 18..1062, 266..850)
         f"[s_slide]crop={upper_crop},scale=1044:584:flags=lanczos[slide];"
@@ -176,7 +218,7 @@ def render_segment(
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         raise RuntimeError(f"ffmpeg segment failed on {src}: {r.stderr}")
-    return get_duration(dst), punch_t
+    return get_stream_duration(dst, "v:0"), punch_t
 
 
 def normalize_ass_text(text: str) -> str:
@@ -341,12 +383,13 @@ def build_from_spec(spec_path: Path, keep_intermediates: bool = False) -> Path:
             cur_a = "[0:a]"
             acc_d = part_durs[0]
             for i in range(1, len(part_files)):
-                xf_off = acc_d - trans_d
+                eff_trans = min(trans_d, max(0.01, acc_d - 0.05), max(0.01, part_durs[i] - 0.05))
+                xf_off = max(0.0, acc_d - eff_trans)
                 nv = f"[vx{i}]"
                 na = f"[ax{i}]"
                 tr_type = "fadewhite" if (has_hook and i == 1) else "slideleft"
-                v_chain.append(f"{cur_v}[{i}:v]xfade=transition={tr_type}:duration={trans_d:.2f}:offset={xf_off:.3f}{nv}")
-                a_chain.append(f"{cur_a}[{i}:a]acrossfade=d={trans_d:.2f}:c1=tri:c2=tri{na}")
+                v_chain.append(f"{cur_v}[{i}:v]xfade=transition={tr_type}:duration={eff_trans:.3f}:offset={xf_off:.3f}{nv}")
+                a_chain.append(f"{cur_a}[{i}:a]acrossfade=d={eff_trans:.3f}:c1=tri:c2=tri{na}")
                 cur_v, cur_a = nv, na
                 acc_d = xf_off + part_durs[i]
 
@@ -362,6 +405,8 @@ def build_from_spec(spec_path: Path, keep_intermediates: bool = False) -> Path:
             )
             if r.returncode != 0:
                 raise RuntimeError(f"xfade failed: {r.stderr}")
+
+        total_dur, _ = validate_av_duration(joined_mp4, expected_dur=total_dur)
 
         # 2) Write ASS subtitles
         ass_path = out_dir / "shorts.ass"
@@ -437,18 +482,29 @@ Dialogue: 5,0:00:00.00,{fmt_ass(total_dur)},Credit,credit,0,0,0,,{spec.get('cred
         if r.returncode != 0:
             raise RuntimeError(f"final render failed: {r.stderr}")
 
+        out_v_dur, _ = validate_av_duration(out_mp4, expected_dur=total_dur)
+
     # Extract 3 verify frames (hook/start, mid, near end)
     verify_times = [
-        ("verify_hook.jpg", min(0.8, total_dur * 0.1)),
-        ("verify_mid.jpg", total_dur * 0.55),
-        ("verify_end.jpg", max(1.0, total_dur * 0.85)),
+        ("verify_hook.jpg", min(0.8, out_v_dur * 0.1)),
+        ("verify_mid.jpg", out_v_dur * 0.55),
+        ("verify_end.jpg", max(1.0, out_v_dur * 0.85)),
     ]
     for fname, ts in verify_times:
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", f"{ts:.2f}", "-i", str(out_mp4), "-vframes", "1", str(out_dir / fname), "-loglevel", "error"]
+        clamped_ts = min(max(0.0, ts), max(0.0, out_v_dur - 0.1))
+        verify_path = out_dir / fname
+        vr = subprocess.run(
+            [
+                "ffmpeg", "-y", "-ss", f"{clamped_ts:.2f}", "-i", str(out_mp4),
+                "-frames:v", "1", "-vf", "scale=out_range=full,format=yuvj420p",
+                "-update", "1", str(verify_path), "-loglevel", "error",
+            ],
+            capture_output=True, text=True,
         )
+        if vr.returncode != 0 or not verify_path.exists() or verify_path.stat().st_size == 0:
+            raise RuntimeError(f"verify frame extraction failed ({fname} @{clamped_ts:.2f}s): {vr.stderr}")
 
-    print(f"\nDONE! -> {out_mp4} ({out_mp4.stat().st_size / (1024*1024):.1f} MB, {total_dur:.1f}s)")
+    print(f"\nDONE! -> {out_mp4} ({out_mp4.stat().st_size / (1024*1024):.1f} MB, {out_v_dur:.1f}s)")
     return out_mp4
 
 
