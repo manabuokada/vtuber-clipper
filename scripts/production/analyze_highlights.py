@@ -15,10 +15,12 @@ import argparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
+import hashlib
 import json
 from pathlib import Path
 import re
 import subprocess
+from urllib.parse import parse_qs, urlparse
 import yaml
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -49,6 +51,47 @@ def calc_age_days(upload_date: str | None) -> int | None:
         return max(0, (datetime.now(JST) - dt).days)
     except ValueError:
         return None
+
+
+def sanitize_path_component(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip()).strip("_")
+    return cleaned or fallback
+
+
+def extract_video_id(url: str, vmeta: dict | None = None) -> str:
+    """動画メタデータまたは URL から動画 ID を抽出する。抽出不可時は URL ハッシュにフォールバック。"""
+    meta_id = (vmeta or {}).get("id")
+    if isinstance(meta_id, str) and meta_id.strip():
+        return sanitize_path_component(meta_id, "unknown")
+
+    parsed = urlparse(url)
+    qs_v = parse_qs(parsed.query).get("v")
+    if qs_v and qs_v[0].strip():
+        return sanitize_path_component(qs_v[0], "unknown")
+
+    host = (parsed.netloc or "").lower()
+    parts = [p for p in parsed.path.split("/") if p]
+    if host.endswith("youtu.be") and parts:
+        return sanitize_path_component(parts[0], "unknown")
+    for prefix in ("shorts", "live", "embed", "v"):
+        if len(parts) >= 2 and parts[0] == prefix:
+            return sanitize_path_component(parts[1], "unknown")
+
+    digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
+    return f"url_{digest}"
+
+
+def build_clip_dir(handle: str, video_id: str, work_dir: Path = WORK_DIR) -> Path:
+    safe_handle = sanitize_path_component(handle.lstrip("@"), "channel")
+    safe_vid = sanitize_path_component(video_id, "unknown")
+    return work_dir / f"{safe_handle}_{safe_vid}"
+
+
+def format_output_dir(out_dir: Path, base_dir: Path = BASE_DIR) -> str:
+    try:
+        return str(out_dir.resolve().relative_to(base_dir.resolve()))
+    except ValueError:
+        return out_dir.name
 
 
 def fetch_latest_archive_url(channel_url: str) -> str | None:
@@ -100,6 +143,7 @@ def fetch_video_meta(url: str) -> dict:
     try:
         m = json.loads(p.stdout)
         return {
+            "id": m.get("id"),
             "title": m.get("title"),
             "upload_date": m.get("upload_date"),
             "duration": m.get("duration"),
@@ -198,8 +242,6 @@ def process_channel(
     stale_days: int = 14,
 ) -> dict:
     handle = (ch.get("handle") or ch["id"]).lstrip("@")
-    out_dir = WORK_DIR / handle
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     if override_url:
         url = override_url
@@ -209,14 +251,19 @@ def process_channel(
         url = fetch_latest_archive_url(ch["channel_url"]) or ch["guideline_source"]
 
     vmeta = fetch_video_meta(url)
+    video_id = extract_video_id(url, vmeta)
     upload_date = vmeta.get("upload_date")
     age_days = calc_age_days(upload_date)
     is_stale_archive = age_days is not None and age_days >= stale_days
 
-    subprocess.run(
+    out_dir = build_clip_dir(handle, video_id, work_dir=WORK_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    sub_proc = subprocess.run(
         [
             "yt-dlp",
             "--skip-download",
+            "--force-overwrites",
             "--write-auto-subs",
             "--write-subs",
             "--sub-lang",
@@ -232,6 +279,7 @@ def process_channel(
         text=True,
         timeout=90,
     )
+    fetch_error = sub_proc.stderr.strip() if sub_proc.returncode != 0 else None
 
     vtt_path = out_dir / "source.ja.vtt"
     chat_path = out_dir / "source.live_chat.json"
@@ -268,15 +316,19 @@ def process_channel(
     summary = {
         "handle": ch.get("handle"),
         "name": ch["name"],
+        "video_id": video_id,
         "video_url": url,
         "video_title": vmeta.get("title"),
         "upload_date": upload_date,
         "age_days": age_days,
         "is_stale_archive": is_stale_archive,
+        "output_dir": format_output_dir(out_dir),
         "has_vtt": vtt_path.exists(),
         "has_chat": chat_path.exists(),
         "peaks": enriched,
     }
+    if fetch_error:
+        summary["fetch_error"] = fetch_error
     (out_dir / "highlights.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 
@@ -315,7 +367,22 @@ def main():
     for r in results:
         age_str = f"{r['age_days']}日前 ({r['upload_date']})" if r["age_days"] is not None else "日付不明"
         print(f"\n================ {r['name']} ({r['handle']}) ================")
-        print(f"URL: {r['video_url']} | 公開: {age_str} | VTT:{r['has_vtt']} | Chat:{r['has_chat']}")
+        print(
+            f"URL: {r['video_url']} | ID: {r['video_id']} | 公開: {age_str} "
+            f"| VTT:{r['has_vtt']} | Chat:{r['has_chat']}"
+        )
+        print(f"出力先: {r['output_dir']}")
+        if r.get("fetch_error"):
+            print(f"  [WARN] 字幕・チャット取得コマンドが異常終了しました: {r['fetch_error']}")
+        if not r["has_vtt"] and not r["has_chat"]:
+            print(
+                "  [INFO] 対象動画の字幕・ライブチャットが未取得のため見どころ候補を抽出できませんでした"
+                "（配信直後で未生成の可能性があります）。"
+            )
+        elif not r["has_vtt"]:
+            print("  [INFO] 日本語字幕が未取得のため、チャット盛り上がり区間のみ出力しています。")
+        elif not r["has_chat"]:
+            print("  [INFO] ライブチャットが未取得のため、字幕区間から均等サンプリングしています。")
         for idx, p in enumerate(r["peaks"][:3], 1):
             m1, s1 = divmod(int(p["window_start"]), 60)
             m2, s2 = divmod(int(p["window_end"]), 60)
