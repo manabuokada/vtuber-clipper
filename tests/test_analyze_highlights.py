@@ -1,3 +1,5 @@
+"""analyze_highlights.py の動画ID別キャッシュ分離（Issue #11）に関するユニットテスト。"""
+
 from __future__ import annotations
 
 import json
@@ -42,32 +44,42 @@ SAMPLE_CHAT_LINE = json.dumps(
 
 
 class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
+    """字幕・チャットキャッシュが動画ID単位で正しく分離されることを検証する。"""
+
     def test_extract_video_id_patterns(self) -> None:
+        """各YouTube URL形式およびフォールバックから動画IDを一意に抽出できること。"""
+        # yt-dlp メタデータに id が含まれる場合は URL より優先して採用する
         self.assertEqual(
             ah.extract_video_id("https://www.youtube.com/watch?v=abc123XYZ01", {"id": "metaId00001"}),
             "metaId00001",
         )
+        # 通常の視聴 URL（watch?v=...）から動画IDを抽出できる
         self.assertEqual(
             ah.extract_video_id("https://www.youtube.com/watch?v=abc123XYZ01&t=12s", {}),
             "abc123XYZ01",
         )
+        # 短縮 URL（youtu.be/...）から動画IDを抽出できる
         self.assertEqual(
             ah.extract_video_id("https://youtu.be/shortId9999?si=foo", None),
             "shortId9999",
         )
+        # ライブ配信 URL（/live/...）から動画IDを抽出できる
         self.assertEqual(
             ah.extract_video_id("https://www.youtube.com/live/liveId77777?feature=share", None),
             "liveId77777",
         )
+        # Shorts URL（/shorts/...）から動画IDを抽出できる
         self.assertEqual(
             ah.extract_video_id("https://www.youtube.com/shorts/clipId55555", None),
             "clipId55555",
         )
+        # YouTube 以外の未知 URL でも url_<8桁ハッシュ> へフォールバックする
         fallback = ah.extract_video_id("https://example.com/custom/stream", None)
         self.assertTrue(fallback.startswith("url_"))
         self.assertEqual(len(fallback), 12)
 
     def test_new_stream_without_subs_does_not_read_stale_caches(self) -> None:
+        """字幕・チャット未生成の新着配信で過去配信のキャッシュを誤読込しないこと（Issue #11 回帰テスト）。"""
         with tempfile.TemporaryDirectory() as tmp:
             work_dir = Path(tmp)
             handle = "sample_vtuber"
@@ -116,13 +128,16 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
             ):
                 summary = ah.process_channel(ch)
 
+            # 過去キャッシュを拾わず「字幕・チャットなし・ピーク空」として返ること
             self.assertEqual(summary["video_id"], "NEWVIDEO002")
             self.assertEqual(summary["video_url"], new_url)
             self.assertFalse(summary["has_vtt"])
             self.assertFalse(summary["has_chat"])
             self.assertEqual(summary["peaks"], [])
+            # 同名残骸ファイル対策として yt-dlp に --force-overwrites が渡されていること
             self.assertIn("--force-overwrites", captured_cmd)
 
+            # 新着配信専用ディレクトリへ highlights.json が保存され、内容も矛盾しないこと
             new_dir = work_dir / f"{handle}_NEWVIDEO002"
             self.assertTrue((new_dir / "highlights.json").exists())
             saved = json.loads((new_dir / "highlights.json").read_text(encoding="utf-8"))
@@ -132,6 +147,7 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
             self.assertEqual(saved["peaks"], [])
 
     def test_two_videos_from_same_channel_are_isolated(self) -> None:
+        """同一チャンネルの別配信を連続解析しても出力先・字幕・結果が混線しないこと。"""
         with tempfile.TemporaryDirectory() as tmp:
             work_dir = Path(tmp)
             handle = "sample_vtuber"
@@ -144,6 +160,7 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
             }
 
             def make_fake_run(vtt_text: str):
+                # yt-dlp が -o で指定された出力先プレフィックス配下に字幕・チャットを保存する挙動を模倣
                 def _fake_run(cmd, **kwargs):
                     out_idx = cmd.index("-o") + 1
                     out_prefix = Path(cmd[out_idx])
@@ -155,6 +172,7 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
 
                 return _fake_run
 
+            # 1本目（配信A）の解析
             with (
                 patch.object(ah, "WORK_DIR", work_dir),
                 patch.object(
@@ -170,6 +188,7 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
             ):
                 res_a = ah.process_channel(ch, override_url="https://www.youtube.com/watch?v=VIDEOAAA001")
 
+            # 2本目（配信B）の解析
             with (
                 patch.object(ah, "WORK_DIR", work_dir),
                 patch.object(
@@ -185,10 +204,12 @@ class AnalyzeHighlightsCacheIsolationTest(unittest.TestCase):
             ):
                 res_b = ah.process_channel(ch, override_url="https://www.youtube.com/watch?v=VIDEOBBB002")
 
+            # 配信A・B それぞれ自身の字幕テキストが抽出され、互いに上書きされないこと
             self.assertTrue(res_a["has_vtt"] and res_a["has_chat"])
             self.assertTrue(res_b["has_vtt"] and res_b["has_chat"])
             self.assertIn("[01:02] 配信Aの発言", res_a["peaks"][0]["transcript"])
             self.assertIn("[01:02] 配信Bの発言", res_b["peaks"][0]["transcript"])
+            # 動画IDごとの独立ディレクトリに highlights.json が個別に生成されていること
             self.assertTrue((work_dir / f"{handle}_VIDEOAAA001" / "highlights.json").exists())
             self.assertTrue((work_dir / f"{handle}_VIDEOBBB002" / "highlights.json").exists())
 
